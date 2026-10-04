@@ -10,10 +10,21 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load .env file
+env_file = BASE_DIR / '.env'
+if env_file.exists():
+    with open(env_file, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#') and '=' in line:
+                k, v = line.split('=', 1)
+                os.environ.setdefault(k.strip(), v.strip().strip('"\''))
 
 
 # Quick-start development settings - unsuitable for production
@@ -142,3 +153,9 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ]
 }
+
+# CamPay Integration Settings
+CAMPAY_USERNAME = os.environ.get('CAMPAY_USERNAME', '')
+CAMPAY_PASSWORD = os.environ.get('CAMPAY_PASSWORD', '')
+CAMPAY_ENVIRONMENT = os.environ.get('CAMPAY_ENVIRONMENT', 'DEMO').upper()
+CAMPAY_SUBSCRIPTION_FEE = 25  # 25 FCFA

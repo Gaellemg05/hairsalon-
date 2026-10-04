@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { api } from '../api';
+import { useLocation } from 'react-router-dom';
+import { api, getMediaUrl } from '../api';
 import { useAuth } from '../auth';
-import { Plus, Trash2, Edit3, X, Save, Calendar, MessageCircle, Image as ImageIcon, Video, Clock, Search, ArrowLeft, Send, Scissors, Paperclip } from 'lucide-react';
+import { Plus, Trash2, Edit3, X, Save, Calendar, MessageCircle, Image as ImageIcon, Video, Clock, Search, ArrowLeft, Send, Scissors, Paperclip, ChevronLeft, ChevronRight, CheckCircle, XCircle, AlertCircle, Phone, User as UserIcon, User, Mail, Check, Archive, ArchiveRestore, AlertTriangle } from 'lucide-react';
 
 const MEDIA_TYPES = [
   { value: 'image', label: 'Image' },
@@ -18,9 +19,41 @@ const CATEGORIES = [
 
 const TABS = [
   { id: 'publications', label: 'Portfolio', icon: ImageIcon },
-  { id: 'appointments', label: 'Appointments', icon: Calendar },
+  { id: 'appointments', label: 'Bookings', icon: Clock },
+  { id: 'calendar', label: 'Calendar', icon: Calendar },
   { id: 'messages', label: 'Messages', icon: MessageCircle },
 ];
+
+const STATUS_COLORS = {
+  pending: {
+    bg: '#fef9c3',
+    border: '#facc15',
+    text: '#854d0e',
+    dot: '#eab308',
+    label: 'Pending',
+  },
+  completed: {
+    bg: '#dcfce7',
+    border: '#86efac',
+    text: '#166534',
+    dot: '#16a34a',
+    label: 'Completed',
+  },
+  cancelled: {
+    bg: '#fee2e2',
+    border: '#fca5a5',
+    text: '#991b1b',
+    dot: '#dc2626',
+    label: 'Cancelled',
+  },
+  confirmed: {
+    bg: '#dbeafe',
+    border: '#93c5fd',
+    text: '#1e40af',
+    dot: '#2563eb',
+    label: 'Confirmed',
+  },
+};
 
 const STATUS_STYLES = {
   pending: { label: 'Pending', className: 'badge-pending' },
@@ -31,6 +64,7 @@ const STATUS_STYLES = {
 
 export default function HairdresserDashboard() {
   const { user } = useAuth();
+  const location = useLocation();
   const [activeTab, setActiveTab] = useState('publications');
   const [publications, setPublications] = useState([]);
   const [salon, setSalon] = useState(null);
@@ -50,6 +84,25 @@ export default function HairdresserDashboard() {
   const [pubPreview, setPubPreview] = useState(null);
   const [sending, setSending] = useState(false);
   const fileInputRef = useRef(null);
+
+  // Calendar State
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date());
+  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [statusUpdatingId, setStatusUpdatingId] = useState(null);
+
+  // Chat State
+  const [chatTab, setChatTab] = useState('all');
+  const [chatSearch, setChatSearch] = useState('');
+  const [deleteConfirmChat, setDeleteConfirmChat] = useState(null);
+
+  // Sync tab with URL search param ?tab=...
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const tabParam = params.get('tab');
+    if (tabParam && ['publications', 'appointments', 'calendar', 'messages'].includes(tabParam)) {
+      setActiveTab(tabParam);
+    }
+  }, [location.search]);
 
   const loadData = async () => {
     setLoading(true);
@@ -227,6 +280,149 @@ export default function HairdresserDashboard() {
     }
   };
 
+  const handleUpdateStatus = async (appointmentId, newStatus) => {
+    setStatusUpdatingId(appointmentId);
+    try {
+      await api.updateAppointment(appointmentId, { status: newStatus });
+      setAppointments((prev) =>
+        prev.map((a) => (a.id === appointmentId ? { ...a, status: newStatus } : a))
+      );
+    } catch (err) {
+      console.error('Failed to update status:', err);
+      alert('Failed to update status');
+    } finally {
+      setStatusUpdatingId(null);
+    }
+  };
+
+  const handleStartChatWithClient = async (appt) => {
+    try {
+      const chat = await api.findOrCreateChat({
+        client: appt.client,
+        salon: appt.salon || salon?.id,
+        hairdresser: user.id,
+      });
+      setSelectedChat(chat);
+      setActiveTab('messages');
+    } catch (err) {
+      console.error('Failed to open chat:', err);
+      setActiveTab('messages');
+    }
+  };
+
+  const handleToggleArchive = async (e, chat) => {
+    if (e) e.stopPropagation();
+    try {
+      const res = await api.archiveChat(chat.id);
+      const isArch = res.is_archived;
+      setConversations((prev) =>
+        prev.map((c) => (c.id === chat.id ? { ...c, is_archived: isArch } : c))
+      );
+      if (selectedChat?.id === chat.id) {
+        setSelectedChat((prev) => ({ ...prev, is_archived: isArch }));
+      }
+    } catch (err) {
+      console.error('Failed to toggle archive:', err);
+    }
+  };
+
+  const handleDeleteChat = async (chat) => {
+    try {
+      await api.deleteChat(chat.id);
+      setConversations((prev) => prev.filter((c) => c.id !== chat.id));
+      if (selectedChat?.id === chat.id) {
+        setSelectedChat(null);
+      }
+      setDeleteConfirmChat(null);
+    } catch (err) {
+      console.error('Failed to delete chat:', err);
+    }
+  };
+
+  // Calendar calculations
+  const calendarYear = calendarMonth.getFullYear();
+  const calendarMonthIndex = calendarMonth.getMonth();
+  const monthName = calendarMonth.toLocaleString('default', { month: 'long', year: 'numeric' });
+
+  const prevMonth = () => {
+    setCalendarMonth(new Date(calendarYear, calendarMonthIndex - 1, 1));
+  };
+
+  const nextMonth = () => {
+    setCalendarMonth(new Date(calendarYear, calendarMonthIndex + 1, 1));
+  };
+
+  const goToToday = () => {
+    const today = new Date();
+    setCalendarMonth(today);
+    setSelectedDate(today.toISOString().split('T')[0]);
+  };
+
+  const appointmentsByDate = appointments.reduce((acc, appt) => {
+    if (!appt.date) return acc;
+    const dStr = appt.date.substring(0, 10);
+    if (!acc[dStr]) acc[dStr] = [];
+    acc[dStr].push(appt);
+    return acc;
+  }, {});
+
+  const firstDayOfMonth = new Date(calendarYear, calendarMonthIndex, 1);
+  const daysInMonth = new Date(calendarYear, calendarMonthIndex + 1, 0).getDate();
+  const startDayOffset = (firstDayOfMonth.getDay() + 6) % 7; // Monday start
+  const prevMonthLastDay = new Date(calendarYear, calendarMonthIndex, 0).getDate();
+
+  const calendarDays = [];
+  for (let i = startDayOffset - 1; i >= 0; i--) {
+    const dayNum = prevMonthLastDay - i;
+    const prevM = calendarMonthIndex === 0 ? 12 : calendarMonthIndex;
+    const prevY = calendarMonthIndex === 0 ? calendarYear - 1 : calendarYear;
+    const dateStr = `${prevY}-${String(prevM).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+    calendarDays.push({ dayNum, dateStr, isCurrentMonth: false });
+  }
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${calendarYear}-${String(calendarMonthIndex + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    calendarDays.push({ dayNum: d, dateStr, isCurrentMonth: true });
+  }
+
+  const remainingCells = (7 - (calendarDays.length % 7)) % 7;
+  for (let d = 1; d <= remainingCells; d++) {
+    const nextM = calendarMonthIndex === 11 ? 1 : calendarMonthIndex + 2;
+    const nextY = calendarMonthIndex === 11 ? calendarYear + 1 : calendarYear;
+    const dateStr = `${nextY}-${String(nextM).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    calendarDays.push({ dayNum: d, dateStr, isCurrentMonth: false });
+  }
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  const selectedDayAppointments = appointmentsByDate[selectedDate] || [];
+
+  const formattedSelectedDate = (() => {
+    try {
+      const parts = selectedDate.split('-');
+      if (parts.length === 3) {
+        const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+        return d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+      }
+    } catch {
+      // fallback
+    }
+    return selectedDate;
+  })();
+
+  const activeChatsCount = conversations.filter((c) => !c.is_archived).length;
+  const archivedChatsCount = conversations.filter((c) => Boolean(c.is_archived)).length;
+
+  const filteredDashboardChats = conversations.filter((c) => {
+    const isArchived = Boolean(c.is_archived);
+    if (chatTab === 'archived' && !isArchived) return false;
+    if (chatTab === 'all' && isArchived) return false;
+    if (!chatSearch.trim()) return true;
+    const name = `${c.client_details?.first_name || ''} ${c.client_details?.last_name || ''} ${c.client_details?.username || ''}`.toLowerCase();
+    const lastMsg = (c.last_message?.content || '').toLowerCase();
+    const q = chatSearch.toLowerCase();
+    return name.includes(q) || lastMsg.includes(q);
+  });
+
   if (loading) {
     return (
       <div className="page-loading">
@@ -321,29 +517,23 @@ export default function HairdresserDashboard() {
                     </div>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                  <div className="form-group">
-                    <label>Media File (Upload from PC)</label>
-                    <input
-                      type="file"
-                      accept="image/*,video/*"
-                      className="form-control"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        setPubFile(file || null);
-                        if (file) {
-                          setPubPreview(URL.createObjectURL(file));
-                          setFormData({ ...formData, media_type: file.type.startsWith('video') ? 'video' : 'image' });
-                        } else {
-                          setPubPreview(null);
-                        }
-                      }}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>Or Media URL</label>
-                    <input className="form-control" placeholder="https://..." value={formData.media_url} onChange={(e) => setFormData({ ...formData, media_url: e.target.value })} />
-                  </div>
+                <div className="form-group">
+                  <label>Media File (Upload from PC)</label>
+                  <input
+                    type="file"
+                    accept="image/*,video/*"
+                    className="form-control"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      setPubFile(file || null);
+                      if (file) {
+                        setPubPreview(URL.createObjectURL(file));
+                        setFormData({ ...formData, media_type: file.type.startsWith('video') ? 'video' : 'image' });
+                      } else {
+                        setPubPreview(null);
+                      }
+                    }}
+                  />
                 </div>
                 {pubPreview && (
                   <div style={{ marginTop: '12px' }}>
@@ -476,33 +666,382 @@ export default function HairdresserDashboard() {
         </div>
       )}
 
+      {activeTab === 'calendar' && (
+        <div className="hd-calendar-section animate-fade-in">
+          {/* Header Bar: Navigation + Status Color Legend */}
+          <div className="hd-calendar-header-bar">
+            <div className="hd-calendar-nav-group">
+              <button
+                type="button"
+                className="hd-nav-btn"
+                onClick={prevMonth}
+                title="Previous Month"
+              >
+                <ChevronLeft size={20} />
+              </button>
+              <h2 className="hd-calendar-month-title">{monthName}</h2>
+              <button
+                type="button"
+                className="hd-nav-btn"
+                onClick={nextMonth}
+                title="Next Month"
+              >
+                <ChevronRight size={20} />
+              </button>
+              <button
+                type="button"
+                className="hd-today-btn"
+                onClick={goToToday}
+              >
+                Today
+              </button>
+            </div>
+
+            {/* Status Legend (Pending=Yellow, Completed=Green, Cancelled=Red, Confirmed=Blue) */}
+            <div className="hd-calendar-legend">
+              <div className="hd-legend-item legend-pending">
+                <span className="hd-legend-dot" />
+                <span>Pending</span>
+              </div>
+              <div className="hd-legend-item legend-completed">
+                <span className="hd-legend-dot" />
+                <span>Completed</span>
+              </div>
+              <div className="hd-legend-item legend-cancelled">
+                <span className="hd-legend-dot" />
+                <span>Cancelled</span>
+              </div>
+              <div className="hd-legend-item legend-confirmed">
+                <span className="hd-legend-dot" />
+                <span>Confirmed</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Two-Column Calendar Layout */}
+          <div className="hd-calendar-layout">
+            {/* Calendar Grid Card */}
+            <div className="hd-calendar-card">
+              <div className="hd-calendar-weekdays">
+                {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => (
+                  <div key={day} className="hd-weekday-col">
+                    {day}
+                  </div>
+                ))}
+              </div>
+
+              <div className="hd-calendar-grid">
+                {calendarDays.map((cell) => {
+                  const dayBookings = appointmentsByDate[cell.dateStr] || [];
+                  const isToday = cell.dateStr === todayStr;
+                  const isSelected = cell.dateStr === selectedDate;
+                  const hasBookings = dayBookings.length > 0;
+
+                  return (
+                    <div
+                      key={cell.dateStr}
+                      className={`hd-calendar-cell ${!cell.isCurrentMonth ? 'hd-cell-outside' : ''} ${isToday ? 'hd-cell-today' : ''} ${isSelected ? 'hd-cell-selected' : ''} ${hasBookings ? 'hd-cell-booked' : ''}`}
+                      onClick={() => {
+                        setSelectedDate(cell.dateStr);
+                        if (!cell.isCurrentMonth) {
+                          const [y, m] = cell.dateStr.split('-').map(Number);
+                          setCalendarMonth(new Date(y, m - 1, 1));
+                        }
+                      }}
+                    >
+                      <div className="hd-cell-top">
+                        <span className="hd-cell-day-num">{cell.dayNum}</span>
+                        {isToday && <span className="hd-cell-badge">Today</span>}
+                      </div>
+
+                      <div className="hd-cell-bottom">
+                        {hasBookings && (
+                          <>
+                            <div className="hd-cell-dots">
+                              {dayBookings.slice(0, 4).map((b, idx) => (
+                                <span
+                                  key={b.id || idx}
+                                  className={`hd-dot dot-${b.status || 'pending'}`}
+                                  title={`${b.time} - ${b.status}`}
+                                />
+                              ))}
+                              {dayBookings.length > 4 && (
+                                <span style={{ fontSize: '9px', fontWeight: 700, color: '#64748b' }}>
+                                  +{dayBookings.length - 4}
+                                </span>
+                              )}
+                            </div>
+                            <span className="hd-cell-count-text">
+                              {dayBookings.length} {dayBookings.length === 1 ? 'booking' : 'bookings'}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Selected Day Bookings Detail View */}
+            <div className="hd-day-bookings-card">
+              <div className="hd-day-header">
+                <div>
+                  <h3 className="hd-day-title">{formattedSelectedDate}</h3>
+                  <div className="hd-day-subtitle">
+                    {selectedDayAppointments.length === 0
+                      ? 'No appointments on this date'
+                      : `${selectedDayAppointments.length} appointment${selectedDayAppointments.length > 1 ? 's' : ''} scheduled`}
+                  </div>
+                </div>
+                {selectedDayAppointments.length > 0 && (
+                  <span className="hd-day-count-badge">
+                    {selectedDayAppointments.length} {selectedDayAppointments.length === 1 ? 'Booking' : 'Bookings'}
+                  </span>
+                )}
+              </div>
+
+              {selectedDayAppointments.length === 0 ? (
+                <div className="hd-empty-day-state">
+                  <Calendar size={44} strokeWidth={1.5} color="#94a3b8" />
+                  <h4>No Appointments</h4>
+                  <p>
+                    There are no bookings on this date. Click on any highlighted date in the calendar to view its booking details.
+                  </p>
+                </div>
+              ) : (
+                <div className="hd-day-bookings-list">
+                  {selectedDayAppointments.map((appt) => {
+                    const statusCfg = STATUS_COLORS[appt.status] || STATUS_COLORS.pending;
+                    const clientName = `${appt.client_details?.first_name || ''} ${appt.client_details?.last_name || ''}`.trim() || appt.client_details?.username || 'Client';
+                    const clientInitial = clientName.charAt(0).toUpperCase();
+
+                    return (
+                      <div key={appt.id} className="hd-day-appt-card">
+                        <div className="hd-appt-top">
+                          <div className="hd-appt-time">
+                            <Clock size={14} />
+                            <span>{appt.time}</span>
+                          </div>
+                          <span
+                            className="hd-status-badge"
+                            style={{
+                              backgroundColor: statusCfg.bg,
+                              borderColor: statusCfg.border,
+                              color: statusCfg.text,
+                              border: `1px solid ${statusCfg.border}`,
+                            }}
+                          >
+                            <span
+                              style={{
+                                width: '6px',
+                                height: '6px',
+                                borderRadius: '50%',
+                                backgroundColor: statusCfg.dot,
+                                display: 'inline-block',
+                              }}
+                            />
+                            {statusCfg.label}
+                          </span>
+                        </div>
+
+                        <div className="hd-appt-client">
+                          <div className="hd-client-avatar">
+                            {appt.client_details?.profile_picture ? (
+                              <img src={getMediaUrl(appt.client_details.profile_picture)} alt={clientName} style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }} />
+                            ) : (
+                              clientInitial
+                            )}
+                          </div>
+                          <div className="hd-client-details">
+                            <h4 className="hd-client-name">{clientName}</h4>
+                            <div className="hd-client-meta">
+                              {appt.client_details?.phone_number && (
+                                <a href={`tel:${appt.client_details.phone_number}`} title="Call client">
+                                  <Phone size={13} /> {appt.client_details.phone_number}
+                                </a>
+                              )}
+                              {appt.client_details?.email && (
+                                <a href={`mailto:${appt.client_details.email}`} title="Email client">
+                                  <Mail size={13} /> {appt.client_details.email}
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="hd-appt-service-info">
+                          <div className="hd-service-title">
+                            <Scissors size={15} color="var(--primary)" />
+                            <span>{appt.service_details?.name || 'Hair Service'}</span>
+                          </div>
+                          <div className="hd-service-price">
+                            {appt.service_details?.price ? `${appt.service_details.price.toLocaleString()} FCFA` : '—'}
+                          </div>
+                        </div>
+
+                        <div className="hd-appt-actions">
+                          {appt.status === 'pending' && (
+                            <>
+                              <button
+                                type="button"
+                                className="hd-btn-confirm"
+                                disabled={statusUpdatingId === appt.id}
+                                onClick={() => handleUpdateStatus(appt.id, 'confirmed')}
+                              >
+                                <Check size={14} /> Confirm
+                              </button>
+                              <button
+                                type="button"
+                                className="hd-btn-cancel"
+                                disabled={statusUpdatingId === appt.id}
+                                onClick={() => handleUpdateStatus(appt.id, 'cancelled')}
+                              >
+                                <XCircle size={14} /> Cancel
+                              </button>
+                            </>
+                          )}
+
+                          {appt.status === 'confirmed' && (
+                            <>
+                              <button
+                                type="button"
+                                className="hd-btn-complete"
+                                disabled={statusUpdatingId === appt.id}
+                                onClick={() => handleUpdateStatus(appt.id, 'completed')}
+                              >
+                                <CheckCircle size={14} /> Mark Completed
+                              </button>
+                              <button
+                                type="button"
+                                className="hd-btn-cancel"
+                                disabled={statusUpdatingId === appt.id}
+                                onClick={() => handleUpdateStatus(appt.id, 'cancelled')}
+                              >
+                                <XCircle size={14} /> Cancel
+                              </button>
+                            </>
+                          )}
+
+
+
+                          <button
+                            type="button"
+                            className="hd-btn-chat"
+                            onClick={() => handleStartChatWithClient(appt)}
+                          >
+                            <MessageCircle size={14} /> Message Client
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {activeTab === 'messages' && (
         <div className="dashboard-chats">
           {!selectedChat ? (
             <>
               <div className="search-bar">
                 <Search size={18} className="search-icon" />
-                <input type="text" placeholder="Search conversations..." className="search-input" />
+                <input
+                  type="text"
+                  placeholder="Search conversations..."
+                  className="search-input"
+                  value={chatSearch}
+                  onChange={(e) => setChatSearch(e.target.value)}
+                />
               </div>
-              {conversations.length === 0 ? (
+
+              {/* Chat Tabs: All vs Archived */}
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${chatTab === 'all' ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => setChatTab('all')}
+                  style={{ borderRadius: '20px', padding: '6px 16px' }}
+                >
+                  All ({activeChatsCount})
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${chatTab === 'archived' ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => setChatTab('archived')}
+                  style={{ borderRadius: '20px', padding: '6px 16px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <Archive size={14} /> Archived ({archivedChatsCount})
+                </button>
+              </div>
+
+              {filteredDashboardChats.length === 0 ? (
                 <div className="empty-state">
                   <MessageCircle size={40} />
-                  <h3>No conversations</h3>
-                  <p>Clients will message you after booking</p>
+                  <h3>
+                    {chatTab === 'archived' ? 'No archived conversations' : chatSearch ? 'No matching conversations' : 'No conversations yet'}
+                  </h3>
+                  <p>
+                    {chatTab === 'archived' ? 'Archived conversations will appear here' : 'Clients will message you after booking appointments'}
+                  </p>
                 </div>
               ) : (
                 <div className="conversations-list">
-                  {conversations.map((chat, idx) => (
-                    <div key={chat.id} className="conversation-card card" onClick={() => setSelectedChat(chat)} style={{ animationDelay: `${idx * 0.05}s` }}>
-                      <div className="conv-avatar">
-                        {chat.client_details?.first_name?.charAt(0) || chat.client_details?.username?.charAt(0) || '?'}
-                      </div>
-                      <div className="conv-content">
-                        <div className="conv-row1">
-                          <h4>{chat.client_details?.first_name || ''} {chat.client_details?.last_name || ''}</h4>
-                          <span className="conv-time">{chat.last_message ? new Date(chat.last_message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
+                  {filteredDashboardChats.map((chat, idx) => (
+                    <div
+                      key={chat.id}
+                      className="conversation-card card"
+                      onClick={() => setSelectedChat(chat)}
+                      style={{
+                        animationDelay: `${idx * 0.04}s`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
+                        <div className="conv-avatar">
+                          {chat.client_details?.first_name?.charAt(0) || chat.client_details?.username?.charAt(0) || '?'}
                         </div>
-                        <p className="conv-preview">{chat.last_message ? `${chat.last_message.sender}: ${chat.last_message.content?.substring(0, 60)}` : 'No messages yet'}</p>
+                        <div className="conv-content" style={{ flex: 1, minWidth: 0 }}>
+                          <div className="conv-row1">
+                            <h4>{chat.client_details?.first_name || ''} {chat.client_details?.last_name || chat.client_details?.username || ''}</h4>
+                            <span className="conv-time">
+                              {chat.last_message ? new Date(chat.last_message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                            </span>
+                          </div>
+                          <p className="conv-preview" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {chat.last_message ? `${chat.last_message.sender}: ${chat.last_message.content?.substring(0, 60)}` : 'No messages yet'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: '12px' }}>
+                        {chat.unread_count > 0 && <div className="conv-dot" />}
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          title={chat.is_archived ? 'Unarchive conversation' : 'Archive conversation'}
+                          onClick={(e) => handleToggleArchive(e, chat)}
+                          style={{ color: 'var(--text-secondary)', padding: '6px 8px' }}
+                        >
+                          {chat.is_archived ? <ArchiveRestore size={16} /> : <Archive size={16} />}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          title="Delete conversation"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeleteConfirmChat(chat);
+                          }}
+                          style={{ color: 'var(--danger, #ef4444)', padding: '6px 8px' }}
+                        >
+                          <Trash2 size={16} />
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -515,9 +1054,29 @@ export default function HairdresserDashboard() {
                 <button className="btn btn-ghost" onClick={() => setSelectedChat(null)}>
                   <ArrowLeft size={20} />
                 </button>
-                <div className="chat-header-info">
+                <div className="chat-header-info" style={{ flex: 1 }}>
                   <h2>{selectedChat.client_details?.first_name} {selectedChat.client_details?.last_name}</h2>
                   <p>{selectedChat.salon_details?.name}</p>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    title={selectedChat.is_archived ? 'Unarchive conversation' : 'Archive conversation'}
+                    onClick={(e) => handleToggleArchive(e, selectedChat)}
+                    style={{ color: 'var(--text-secondary)' }}
+                  >
+                    {selectedChat.is_archived ? <ArchiveRestore size={18} /> : <Archive size={18} />}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    title="Delete conversation"
+                    onClick={() => setDeleteConfirmChat(selectedChat)}
+                    style={{ color: 'var(--danger, #ef4444)' }}
+                  >
+                    <Trash2 size={18} />
+                  </button>
                 </div>
               </div>
               <div className="chat-messages">
@@ -647,6 +1206,65 @@ export default function HairdresserDashboard() {
               </form>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Delete Conversation Confirmation Modal */}
+      {deleteConfirmChat && (
+        <div
+          className="modal-backdrop animate-fade-in"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.55)',
+            backdropFilter: 'blur(3px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: '16px',
+          }}
+          onClick={() => setDeleteConfirmChat(null)}
+        >
+          <div
+            className="card"
+            style={{
+              maxWidth: '420px',
+              width: '100%',
+              padding: '24px',
+              borderRadius: '16px',
+              boxShadow: '0 20px 40px rgba(0, 0, 0, 0.25)',
+              background: 'var(--card-bg, #ffffff)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px', color: 'var(--danger, #ef4444)' }}>
+              <AlertTriangle size={24} />
+              <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700 }}>Delete Conversation?</h3>
+            </div>
+            <p style={{ color: 'var(--text-secondary, #64748b)', fontSize: '14px', lineHeight: 1.5, marginBottom: '20px' }}>
+              This conversation will be permanently removed from your chat list.
+              <br /><br />
+              <strong style={{ color: 'var(--text-primary, #0f172a)' }}>Note:</strong> Only if both parties delete the conversation will it be completely erased from the database. If the client has not deleted it, their messages remain preserved for them.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setDeleteConfirmChat(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                onClick={() => handleDeleteChat(deleteConfirmChat)}
+              >
+                <Trash2 size={16} /> Delete
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

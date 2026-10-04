@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { api } from '../api';
+import { api, getMediaUrl } from '../api';
 import { useAuth } from '../auth';
 import { Star, MapPin, Phone, ChevronLeft, Clock, Users, Image as ImageIcon, Video, Calendar, MessageCircle } from 'lucide-react';
 
@@ -53,6 +53,12 @@ export default function SalonDetailPage() {
     }
   }, [selectedStylist, bookingDate, selectedService]);
 
+  const isTimeBooked = (timeStr) => {
+    if (!slotsData?.slots || !timeStr) return false;
+    const match = slotsData.slots.find(s => s.time === timeStr.slice(0, 5));
+    return match ? !match.available : false;
+  };
+
   const handleBook = async () => {
     setBookingMsg('');
     setBookingError('');
@@ -85,7 +91,7 @@ export default function SalonDetailPage() {
   };
 
   if (loading) return <div className="page-loading">Loading salon...</div>;
-  if (!salon) return <div className="page-error">Salon not found</div>;
+  if (!salon) return <div className="page-error">Salon not found or currently inactive.</div>;
 
   const filteredPublications = [
     ...(salon.publications || []).map(p => ({ ...p, _key: `pub_${p.id}`, _type: 'salon' })),
@@ -200,7 +206,7 @@ export default function SalonDetailPage() {
                 <div key={hd.id} className="stylist-card">
                   <div className="stylist-avatar">
                     {hd.profile_picture ? (
-                      <img src={hd.profile_picture} alt={hd.first_name} />
+                      <img src={getMediaUrl(hd.profile_picture)} alt={hd.first_name} />
                     ) : (
                       <span>{hd.first_name?.charAt(0) || hd.username?.charAt(0)}</span>
                     )}
@@ -328,26 +334,86 @@ export default function SalonDetailPage() {
             )}
 
             {step === 3 && (
-              <div className="form-row animate-fade-in">
+              <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <div className="form-group">
-                  <label>Date</label>
+                  <label>Select Date</label>
                   <input
                     type="date"
                     className="form-control"
                     value={bookingDate}
                     min={new Date().toISOString().split('T')[0]}
-                    onChange={(e) => setBookingDate(e.target.value)}
+                    onChange={(e) => {
+                      setBookingDate(e.target.value);
+                      setBookingError('');
+                    }}
                   />
                 </div>
-                <div className="form-group">
-                  <label>Time</label>
-                  <input
-                    type="time"
-                    className="form-control"
-                    value={bookingTime}
-                    onChange={(e) => setBookingTime(e.target.value)}
-                  />
-                </div>
+
+                {bookingDate && (
+                  <div className="slots-container">
+                    <div className="slots-label">
+                      <span>Available Time Slots ({bookingDate})</span>
+                      {loadingSlots && <span style={{ fontSize: '12px', color: 'var(--primary)' }}>Checking availability...</span>}
+                    </div>
+
+                    {loadingSlots ? (
+                      <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                        Loading available slots...
+                      </div>
+                    ) : slotsData?.slots && slotsData.slots.length > 0 ? (
+                      <div className="slots-grid">
+                        {slotsData.slots.map((slot) => {
+                          const isSelected = bookingTime.slice(0, 5) === slot.time;
+                          const isBooked = !slot.available;
+                          return (
+                            <button
+                              key={slot.time}
+                              type="button"
+                              disabled={isBooked}
+                              title={isBooked ? 'This slot is already booked for this stylist' : 'Click to select slot'}
+                              className={`slot-chip ${isSelected ? 'slot-chip-selected' : ''} ${isBooked ? 'slot-chip-booked' : ''}`}
+                              onClick={() => {
+                                if (!isBooked) {
+                                  setBookingTime(slot.time);
+                                  setBookingError('');
+                                }
+                              }}
+                            >
+                              <span>{slot.time}</span>
+                              {isBooked ? (
+                                <span className="slot-badge-booked">Booked</span>
+                              ) : (
+                                <span style={{ fontSize: '10px', color: isSelected ? 'rgba(255,255,255,0.9)' : 'var(--success)' }}>Free</span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+
+                    <div className="form-group" style={{ marginTop: '14px' }}>
+                      <label style={{ fontSize: '13px' }}>Selected or Custom Time</label>
+                      <input
+                        type="time"
+                        className="form-control"
+                        value={bookingTime}
+                        onChange={(e) => {
+                          setBookingTime(e.target.value);
+                          if (isTimeBooked(e.target.value)) {
+                            setBookingError('Stylist is already booked at this time slot. Please choose an available slot.');
+                          } else {
+                            setBookingError('');
+                          }
+                        }}
+                      />
+                      {bookingTime && isTimeBooked(bookingTime) && (
+                        <div style={{ color: 'var(--danger)', fontSize: '12px', marginTop: '6px', fontWeight: 600 }}>
+                          ⚠️ Stylist is already booked at this time slot. Overlapping bookings are prevented.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -392,9 +458,15 @@ export default function SalonDetailPage() {
                     setBookingError('Please select a service.');
                     return;
                   }
-                  if (step === 3 && (!bookingDate || !bookingTime)) {
-                    setBookingError('Please select both a date and a time.');
-                    return;
+                  if (step === 3) {
+                    if (!bookingDate || !bookingTime) {
+                      setBookingError('Please select both a date and a time.');
+                      return;
+                    }
+                    if (isTimeBooked(bookingTime)) {
+                      setBookingError('The selected time slot is already booked for this stylist. Overlapping bookings are not allowed.');
+                      return;
+                    }
                   }
                   setBookingError('');
                   setStep(step + 1);

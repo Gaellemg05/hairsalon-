@@ -25,7 +25,7 @@ class RegisterView(APIView):
             token, _ = Token.objects.get_or_create(user=user)
             return Response({
                 'token': token.key,
-                'user': UserSerializer(user).data
+                'user': UserSerializer(user, context={'request': request}).data
             }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -40,7 +40,7 @@ class LoginView(APIView):
             token, _ = Token.objects.get_or_create(user=user)
             return Response({
                 'token': token.key,
-                'user': UserSerializer(user).data
+                'user': UserSerializer(user, context={'request': request}).data
             })
         return Response({'error': 'Invalid Credentials'}, status=status.HTTP_400_BAD_REQUEST)
 

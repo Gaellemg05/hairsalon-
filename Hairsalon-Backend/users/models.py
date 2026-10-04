@@ -10,6 +10,7 @@ class User(AbstractUser):
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='client')
     phone_number = models.CharField(max_length=20, blank=True, null=True)
     profile_picture = models.URLField(max_length=500, blank=True, null=True)
+    profile_image = models.FileField(upload_to='profiles/', blank=True, null=True)
 
     def __str__(self):
         return f"{self.username} ({self.get_role_display()})"

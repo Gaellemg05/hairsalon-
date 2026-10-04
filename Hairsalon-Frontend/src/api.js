@@ -1,5 +1,14 @@
 const BASE_URL = 'http://localhost:8000';
 
+export const getMediaUrl = (url) => {
+  if (!url) return '';
+  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('blob:') || url.startsWith('data:')) {
+    return url;
+  }
+  const clean = url.startsWith('/') ? url : `/${url}`;
+  return `${BASE_URL}${clean}`;
+};
+
 const handle401 = () => {
   localStorage.removeItem('token');
   localStorage.removeItem('user');
@@ -58,6 +67,21 @@ const apiCallMultipart = async (url, formData) => {
   return res.json();
 };
 
+const apiCallMultipartPatch = async (url, formData) => {
+  const headers = buildHeaders({}, false);
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers,
+    body: formData,
+  });
+  if (res.status === 401) {
+    handle401();
+    throw new Error(await res.text());
+  }
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+};
+
 const apiCallRaw = async (url, options = {}) => {
   const res = await authFetch(url, options);
   if (!res.ok) throw new Error(await res.text());
@@ -87,15 +111,24 @@ export const api = {
   },
 
   // Users APIs
+  getUser: (id) => apiCall(`${BASE_URL}/api/users/${id}/`),
+
   getUsers: (role = '') => apiCall(`${BASE_URL}/api/users/?role=${role}`),
+
+  getUser: (id) => apiCall(`${BASE_URL}/api/users/${id}/`),
 
   createUser: (userData) => apiCall(`${BASE_URL}/api/users/`, {
     method: 'POST', body: JSON.stringify(userData),
   }),
 
-  updateUser: (id, userData) => apiCall(`${BASE_URL}/api/users/${id}/`, {
-    method: 'PATCH', body: JSON.stringify(userData),
-  }),
+  updateUser: (id, userData) => {
+    if (userData instanceof FormData) {
+      return apiCallMultipartPatch(`${BASE_URL}/api/users/${id}/`, userData);
+    }
+    return apiCall(`${BASE_URL}/api/users/${id}/`, {
+      method: 'PATCH', body: JSON.stringify(userData),
+    });
+  },
 
   // Salons APIs
   getSalons: (managerId = '') => {
@@ -107,13 +140,23 @@ export const api = {
 
   getSalon: (id) => apiCall(`${BASE_URL}/api/salons/${id}/`),
 
-  createSalon: (salonData) => apiCall(`${BASE_URL}/api/salons/`, {
-    method: 'POST', body: JSON.stringify(salonData),
-  }),
+  createSalon: (salonData) => {
+    if (salonData instanceof FormData) {
+      return apiCallMultipart(`${BASE_URL}/api/salons/`, salonData);
+    }
+    return apiCall(`${BASE_URL}/api/salons/`, {
+      method: 'POST', body: JSON.stringify(salonData),
+    });
+  },
 
-  updateSalon: (id, salonData) => apiCall(`${BASE_URL}/api/salons/${id}/`, {
-    method: 'PATCH', body: JSON.stringify(salonData),
-  }),
+  updateSalon: (id, salonData) => {
+    if (salonData instanceof FormData) {
+      return apiCallMultipartPatch(`${BASE_URL}/api/salons/${id}/`, salonData);
+    }
+    return apiCall(`${BASE_URL}/api/salons/${id}/`, {
+      method: 'PATCH', body: JSON.stringify(salonData),
+    });
+  },
 
   // Services APIs
   getServices: (salonId = '') => apiCall(`${BASE_URL}/api/services/?salon=${salonId}`),
@@ -240,6 +283,12 @@ deleteHairstyle: (id) => apiCallRaw(`${BASE_URL}/api/hairstyle-publications/${id
     method: 'POST', body: JSON.stringify(data),
   }),
 
+  checkSubscriptionStatus: (salonId, reference) => apiCall(`${BASE_URL}/api/salons/${salonId}/check_subscription/?reference=${encodeURIComponent(reference)}`),
+
+  demoApproveSubscription: (salonId, reference) => apiCall(`${BASE_URL}/api/salons/${salonId}/demo_approve/`, {
+    method: 'POST', body: JSON.stringify({ reference }),
+  }),
+
   getSubscriptionTransactions: (salonId) => apiCall(`${BASE_URL}/api/salons/${salonId}/transactions/`),
 
   // Chats
@@ -257,6 +306,14 @@ deleteHairstyle: (id) => apiCallRaw(`${BASE_URL}/api/hairstyle-publications/${id
 
   markChatRead: (chatId) => apiCall(`${BASE_URL}/api/chats/${chatId}/mark_read/`, {
     method: 'POST',
+  }),
+
+  archiveChat: (chatId) => apiCall(`${BASE_URL}/api/chats/${chatId}/archive/`, {
+    method: 'POST',
+  }),
+
+  deleteChat: (chatId) => apiCallRaw(`${BASE_URL}/api/chats/${chatId}/`, {
+    method: 'DELETE',
   }),
 
   sendMessage: (chatId, content = '', imageFile = null) => {

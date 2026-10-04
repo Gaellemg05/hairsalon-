@@ -1,14 +1,16 @@
 import { useState } from 'react';
 import { LogOut, Edit3, Calendar, Star, ChevronRight, Shield, User, Camera } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { api } from '../api';
+import { api, getMediaUrl } from '../api';
 import { useAuth } from '../auth';
 
 export default function ProfilePage() {
   const navigate = useNavigate();
   const { user, logout, updateUser } = useAuth();
   const [editing, setEditing] = useState(false);
-  const [formData, setFormData] = useState({ first_name: '', last_name: '', email: '', phone_number: '', profile_picture: '' });
+  const [formData, setFormData] = useState({ first_name: '', last_name: '', email: '', phone_number: '' });
+  const [profileFile, setProfileFile] = useState(null);
+  const [profilePreview, setProfilePreview] = useState(null);
 
   const handleLogout = () => {
     logout();
@@ -22,8 +24,9 @@ export default function ProfilePage() {
         last_name: user.last_name || '',
         email: user.email || '',
         phone_number: user.phone_number || '',
-        profile_picture: user.profile_picture || '',
       });
+      setProfileFile(null);
+      setProfilePreview(null);
     }
     setEditing(true);
   };
@@ -31,9 +34,19 @@ export default function ProfilePage() {
   const handleSave = async (e) => {
     e.preventDefault();
     try {
-      await api.updateUser(user.id, formData);
-      updateUser(formData);
+      const data = new FormData();
+      data.append('first_name', formData.first_name);
+      data.append('last_name', formData.last_name);
+      data.append('email', formData.email);
+      data.append('phone_number', formData.phone_number);
+      if (profileFile) {
+        data.append('profile_image', profileFile);
+      }
+      const updated = await api.updateUser(user.id, data);
+      updateUser(updated);
       setEditing(false);
+      setProfileFile(null);
+      setProfilePreview(null);
     } catch (err) {
       console.error(err);
       alert('Failed to update profile');
@@ -51,9 +64,9 @@ export default function ProfilePage() {
 
       <div className="profile-card card animate-fade-in">
         <div className="profile-avatar-section">
-          <div className="profile-avatar" style={user.profile_picture ? { background: 'none', padding: 0, overflow: 'hidden' } : {}}>
-            {user.profile_picture ? (
-              <img src={user.profile_picture} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
+          <div className="profile-avatar" style={(user.profile_picture || user.profile_image) ? { background: 'none', padding: 0, overflow: 'hidden' } : {}}>
+            {(user.profile_picture || user.profile_image) ? (
+              <img src={getMediaUrl(user.profile_picture || user.profile_image)} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
             ) : (
               user.first_name?.charAt(0) || user.username?.charAt(0) || <User size={28} />
             )}
@@ -85,14 +98,31 @@ export default function ProfilePage() {
               <input className="form-control" value={formData.phone_number} onChange={(e) => setFormData({...formData, phone_number: e.target.value})} />
             </div>
             <div className="form-group">
-              <label>Profile Picture URL</label>
-              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                <input className="form-control" placeholder="https://..." value={formData.profile_picture} onChange={(e) => setFormData({...formData, profile_picture: e.target.value})} />
-                <Camera size={18} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
+              <label>Profile Picture (Upload from PC)</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="form-control"
+                  style={{ flex: 1 }}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    setProfileFile(file || null);
+                    if (file) {
+                      setProfilePreview(URL.createObjectURL(file));
+                    } else {
+                      setProfilePreview(null);
+                    }
+                  }}
+                />
+                {(profilePreview || user.profile_picture || user.profile_image) && (
+                  <img
+                    src={profilePreview || getMediaUrl(user.profile_picture || user.profile_image)}
+                    alt="Preview"
+                    style={{ width: '50px', height: '50px', borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--primary)', flexShrink: 0 }}
+                  />
+                )}
               </div>
-              {formData.profile_picture && (
-                <img src={formData.profile_picture} alt="Preview" style={{ width: '48px', height: '48px', borderRadius: '50%', objectFit: 'cover', marginTop: '6px', border: '2px solid var(--border-light)' }} />
-              )}
             </div>
             <div className="form-actions">
               <button type="button" className="btn btn-secondary" onClick={() => setEditing(false)}>Cancel</button>

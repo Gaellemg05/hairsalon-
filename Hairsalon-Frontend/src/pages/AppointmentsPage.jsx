@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api } from '../api';
+import { api, getMediaUrl } from '../api';
 import { Calendar, Clock, X, ChevronRight, MapPin, Scissors, CheckCircle2, XCircle, Clock3, CircleDot, MessageCircle, User, Phone, Mail, Star } from 'lucide-react';
 import { useAuth } from '../auth';
 
@@ -171,7 +171,7 @@ export default function AppointmentsPage() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                           <div className="stylist-avatar" style={{ width: '40px', height: '40px', fontSize: '16px', flexShrink: 0, background: 'var(--primary-light)' }}>
                             {appt.client_details.profile_picture
-                              ? <img src={appt.client_details.profile_picture} alt="" style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }} />
+                              ? <img src={getMediaUrl(appt.client_details.profile_picture)} alt="" style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }} />
                               : <span>{appt.client_details.first_name?.charAt(0) || appt.client_details.username?.charAt(0)}</span>}
                           </div>
                           <div style={{ flex: 1 }}>

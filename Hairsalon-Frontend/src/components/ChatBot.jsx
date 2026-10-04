@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { MessageCircle, X, Send, Sparkles } from 'lucide-react';
+import logoImg from '../assets/logo.jpeg';
 
 const BASE_URL = 'http://localhost:8000';
 
@@ -53,7 +54,9 @@ export default function ChatBot() {
         <div className="chatbot-drawer">
           <div className="chatbot-header">
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <div className="chatbot-avatar"><Sparkles size={18} /></div>
+              <div className="chatbot-avatar" style={{ overflow: 'hidden', padding: 0 }}>
+                <img src={logoImg} alt="LuxeSalon" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              </div>
               <div>
                 <h4 style={{ margin: 0, fontSize: '15px' }}>Conseiller Capillaire</h4>
                 <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-tertiary)' }}>Ask me anything</p>

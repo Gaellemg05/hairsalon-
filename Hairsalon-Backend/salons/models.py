@@ -7,6 +7,7 @@ class Salon(models.Model):
     address = models.CharField(max_length=300)
     phone_number = models.CharField(max_length=50, blank=True, null=True)
     email = models.EmailField(blank=True, null=True)
+    image = models.FileField(upload_to='salons/', blank=True, null=True)
     image_url = models.URLField(max_length=500, blank=True, null=True)
     video_url = models.URLField(max_length=500, blank=True, null=True)
     latitude = models.DecimalField(max_digits=9, decimal_places=6, blank=True, null=True)
@@ -120,12 +121,21 @@ class SubscriptionTransaction(models.Model):
         ('trial', 'Free Trial'),
         ('subscription', 'Subscription Payment'),
     )
+    STATUS_CHOICES = (
+        ('PENDING', 'Pending'),
+        ('SUCCESSFUL', 'Successful'),
+        ('FAILED', 'Failed'),
+    )
     salon = models.ForeignKey(Salon, on_delete=models.CASCADE, related_name='subscription_transactions')
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     operator = models.CharField(max_length=50)
     phone_number = models.CharField(max_length=50, blank=True)
     transaction_type = models.CharField(max_length=20, choices=TRANSACTION_TYPES, default='subscription')
+    reference = models.CharField(max_length=120, blank=True, null=True, unique=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='SUCCESSFUL')
+    operator_reference = models.CharField(max_length=120, blank=True, null=True)
+    code = models.CharField(max_length=100, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"{self.salon.name} - {self.amount} FCFA ({self.transaction_type})"
+        return f"{self.salon.name} - {self.amount} FCFA ({self.status})"

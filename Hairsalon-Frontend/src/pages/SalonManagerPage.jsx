@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useAuth } from '../auth';
-import { Store, Scissors, Users, Image, Clock, Plus, X, Save, Trash2, Edit3, ChevronDown, MapPin, Phone, Mail, AlertCircle, Zap } from 'lucide-react';
+import { Store, Scissors, Users, Image, Clock, Plus, X, Save, Trash2, Edit3, ChevronDown, MapPin, Phone, Mail, AlertCircle, Zap, CheckCircle2, XCircle, Loader2, RefreshCw } from 'lucide-react';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -25,6 +25,8 @@ export default function SalonManagerPage() {
   const [editPubId, setEditPubId] = useState(null);
 
   const [salonForm, setSalonForm] = useState({ name: '', address: '', phone_number: '', email: '', description: '', image_url: '' });
+  const [salonImageFile, setSalonImageFile] = useState(null);
+  const [salonImagePreview, setSalonImagePreview] = useState(null);
   const [serviceForm, setServiceForm] = useState({ name: '', description: '', price: '', duration: '', category: 'hair' });
   const [pubForm, setPubForm] = useState({ title: '', description: '', category: 'hair', media: null, media_type: 'image' });
   const [availForm, setAvailForm] = useState({ hairdresser_id: '', day_of_week: 0, start_time: '09:00', end_time: '17:00' });
@@ -34,6 +36,9 @@ export default function SalonManagerPage() {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [operator, setOperator] = useState('momo');
   const [transactions, setTransactions] = useState([]);
+  const [paymentStatus, setPaymentStatus] = useState(null);
+  const [pollingRef, setPollingRef] = useState(null);
+  const [pollingCountdown, setPollingCountdown] = useState(0);
 
   useEffect(() => {
     const load = async () => {
@@ -77,14 +82,169 @@ export default function SalonManagerPage() {
     }
   }, [tab, salon]);
 
+  useEffect(() => {
+    if (!pollingRef || !salon) return;
+
+    let attempts = 0;
+    const maxAttempts = 30; // 30 * 3s = 90s
+    setPollingCountdown(90);
+
+    const countdownInterval = setInterval(() => {
+      setPollingCountdown(prev => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+
+    const intervalId = setInterval(async () => {
+      attempts += 1;
+      try {
+        const check = await api.checkSubscriptionStatus(salon.id, pollingRef);
+        if (check.status === 'SUCCESSFUL') {
+          clearInterval(intervalId);
+          clearInterval(countdownInterval);
+          setPollingRef(null);
+          setPaymentStatus({
+            status: 'SUCCESSFUL',
+            message: check.message || 'Payment confirmed! Your salon is now active and visible to all clients.'
+          });
+          setSalon(prev => ({ ...prev, subscription_active_until: check.subscription_active_until }));
+          const txns = await api.getSubscriptionTransactions(salon.id);
+          setTransactions(txns);
+        } else if (check.status === 'FAILED') {
+          clearInterval(intervalId);
+          clearInterval(countdownInterval);
+          setPollingRef(null);
+          setPaymentStatus({
+            status: 'FAILED',
+            message: check.message || 'Payment failed or was cancelled.'
+          });
+          const txns = await api.getSubscriptionTransactions(salon.id);
+          setTransactions(txns);
+        } else if (attempts >= maxAttempts) {
+          clearInterval(intervalId);
+          clearInterval(countdownInterval);
+          setPollingRef(null);
+          setPaymentResult('Confirmation timed out. If you approved on your phone, click "Check Status Now" below.');
+        }
+      } catch (e) {
+        if (attempts >= maxAttempts) {
+          clearInterval(intervalId);
+          clearInterval(countdownInterval);
+          setPollingRef(null);
+        }
+      }
+    }, 3000);
+
+    return () => {
+      clearInterval(intervalId);
+      clearInterval(countdownInterval);
+    };
+  }, [pollingRef, salon?.id]);
+
+  const handleInitiatePayment = async (e) => {
+    e.preventDefault();
+    setPaying(true);
+    setPaymentResult('');
+    setPaymentStatus(null);
+    try {
+      const res = await api.subscribeSalon(salon.id, { phone_number: phoneNumber, operator });
+      if (res.status === 'PENDING') {
+        setPaymentStatus({
+          status: 'PENDING',
+          reference: res.reference,
+          ussdCode: res.ussd_code,
+          operator: res.operator,
+          message: res.message
+        });
+        setPollingRef(res.reference);
+      } else if (res.status === 'SUCCESSFUL') {
+        setPaymentStatus({
+          status: 'SUCCESSFUL',
+          message: res.message
+        });
+        setSalon(prev => ({ ...prev, subscription_active_until: res.subscription_active_until }));
+        const txns = await api.getSubscriptionTransactions(salon.id);
+        setTransactions(txns);
+      } else {
+        setPaymentResult(res.message || 'Payment initiation failed.');
+      }
+    } catch (err) {
+      setPaymentResult(err.message || 'Failed to initiate CamPay payment.');
+    } finally {
+      setPaying(false);
+    }
+  };
+
+  const handleManualCheck = async () => {
+    const ref = paymentStatus?.reference || pollingRef;
+    if (!ref || !salon) return;
+    setPaying(true);
+    try {
+      const check = await api.checkSubscriptionStatus(salon.id, ref);
+      if (check.status === 'SUCCESSFUL') {
+        setPollingRef(null);
+        setPaymentStatus({
+          status: 'SUCCESSFUL',
+          message: check.message
+        });
+        setSalon(prev => ({ ...prev, subscription_active_until: check.subscription_active_until }));
+        const txns = await api.getSubscriptionTransactions(salon.id);
+        setTransactions(txns);
+      } else if (check.status === 'FAILED') {
+        setPollingRef(null);
+        setPaymentStatus({
+          status: 'FAILED',
+          message: check.message
+        });
+        const txns = await api.getSubscriptionTransactions(salon.id);
+        setTransactions(txns);
+      } else {
+        setPaymentResult('Still pending confirmation on user mobile. Please approve the USSD prompt.');
+      }
+    } catch (e) {
+      setPaymentResult('Error checking status: ' + (e.message || e));
+    } finally {
+      setPaying(false);
+    }
+  };
+
+  const handleDemoApprove = async () => {
+    if (!salon) return;
+    setPaying(true);
+    try {
+      const res = await api.demoApproveSubscription(salon.id, paymentStatus?.reference);
+      setPollingRef(null);
+      setPaymentStatus({
+        status: 'SUCCESSFUL',
+        message: res.message || 'Sandbox approval successful!'
+      });
+      setSalon(prev => ({ ...prev, subscription_active_until: res.subscription_active_until }));
+      const txns = await api.getSubscriptionTransactions(salon.id);
+      setTransactions(txns);
+    } catch (e) {
+      setPaymentResult('Demo approval failed: ' + (e.message || e));
+    } finally {
+      setPaying(false);
+    }
+  };
+
   const handleCreateSalon = async (e) => {
     e.preventDefault();
     setSaving(true);
     setError('');
     try {
-      const s = await api.createSalon(salonForm);
+      const data = new FormData();
+      data.append('name', salonForm.name);
+      data.append('address', salonForm.address);
+      if (salonForm.phone_number) data.append('phone_number', salonForm.phone_number);
+      if (salonForm.email) data.append('email', salonForm.email);
+      if (salonForm.description) data.append('description', salonForm.description);
+      if (salonImageFile) {
+        data.append('image', salonImageFile);
+      }
+      const s = await api.createSalon(data);
       setSalon(s);
       setSalonForm({ name: s.name, address: s.address || '', phone_number: s.phone_number || '', email: s.email || '', description: s.description || '', image_url: s.image_url || '' });
+      setSalonImageFile(null);
+      setSalonImagePreview(null);
     } catch (err) {
       setError('Failed to create salon');
     } finally {
@@ -97,8 +257,20 @@ export default function SalonManagerPage() {
     setSaving(true);
     setError('');
     try {
-      const s = await api.updateSalon(salon.id, salonForm);
+      const data = new FormData();
+      data.append('name', salonForm.name);
+      data.append('address', salonForm.address);
+      if (salonForm.phone_number) data.append('phone_number', salonForm.phone_number);
+      if (salonForm.email) data.append('email', salonForm.email);
+      if (salonForm.description) data.append('description', salonForm.description);
+      if (salonImageFile) {
+        data.append('image', salonImageFile);
+      }
+      const s = await api.updateSalon(salon.id, data);
       setSalon(s);
+      setSalonForm({ name: s.name, address: s.address || '', phone_number: s.phone_number || '', email: s.email || '', description: s.description || '', image_url: s.image_url || '' });
+      setSalonImageFile(null);
+      setSalonImagePreview(null);
     } catch (err) {
       setError('Failed to update salon');
     } finally {
@@ -298,7 +470,7 @@ export default function SalonManagerPage() {
     { key: 'stylists', icon: Users, label: 'Stylists' },
     { key: 'publications', icon: Image, label: 'Publications' },
     { key: 'schedule', icon: Clock, label: 'Schedule' },
-    { key: 'boost', icon: Zap, label: 'Boost' },
+    { key: 'boost', icon: Zap, label: 'Subscription' },
   ];
 
   if (!salon) {
@@ -334,8 +506,26 @@ export default function SalonManagerPage() {
               <textarea className="form-control" rows="3" value={salonForm.description} onChange={(e) => setSalonForm({ ...salonForm, description: e.target.value })} />
             </div>
             <div className="form-group">
-              <label>Image URL</label>
-              <input className="form-control" placeholder="https://..." value={salonForm.image_url} onChange={(e) => setSalonForm({ ...salonForm, image_url: e.target.value })} />
+              <label>Salon Image (Upload from PC)</label>
+              <input
+                type="file"
+                accept="image/*"
+                className="form-control"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  setSalonImageFile(file || null);
+                  if (file) {
+                    setSalonImagePreview(URL.createObjectURL(file));
+                  } else {
+                    setSalonImagePreview(null);
+                  }
+                }}
+              />
+              {salonImagePreview && (
+                <div style={{ marginTop: '8px' }}>
+                  <img src={salonImagePreview} alt="Preview" style={{ width: '100%', maxHeight: '180px', objectFit: 'cover', borderRadius: 'var(--radius-md)' }} />
+                </div>
+              )}
             </div>
             <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={saving}>
               <Store size={18} /> {saving ? 'Creating...' : 'Create Salon'}
@@ -407,9 +597,30 @@ export default function SalonManagerPage() {
               <textarea className="form-control" rows="4" value={salonForm.description} onChange={(e) => setSalonForm({ ...salonForm, description: e.target.value })} />
             </div>
             <div className="form-group">
-              <label>Image URL</label>
-              <input className="form-control" placeholder="https://..." value={salonForm.image_url} onChange={(e) => setSalonForm({ ...salonForm, image_url: e.target.value })} />
-              {salonForm.image_url && <img src={salonForm.image_url} alt="Preview" style={{ width: '100%', maxHeight: '200px', objectFit: 'cover', borderRadius: 'var(--radius-md)', marginTop: '8px' }} />}
+              <label>Salon Image (Upload from PC)</label>
+              <input
+                type="file"
+                accept="image/*"
+                className="form-control"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  setSalonImageFile(file || null);
+                  if (file) {
+                    setSalonImagePreview(URL.createObjectURL(file));
+                  } else {
+                    setSalonImagePreview(null);
+                  }
+                }}
+              />
+              {(salonImagePreview || salonForm.image_url) && (
+                <div style={{ marginTop: '8px' }}>
+                  <img
+                    src={salonImagePreview || salonForm.image_url}
+                    alt="Preview"
+                    style={{ width: '100%', maxHeight: '200px', objectFit: 'cover', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}
+                  />
+                </div>
+              )}
             </div>
             <button type="submit" className="btn btn-primary" disabled={saving}>
               <Save size={16} /> {saving ? 'Saving...' : 'Save Changes'}
@@ -647,105 +858,153 @@ export default function SalonManagerPage() {
       {isManager && tab === 'boost' && (
         <div className="profile-card card" style={{ padding: '28px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px' }}>
-            <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'linear-gradient(135deg, #f59e0b, #d97706)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'linear-gradient(135deg, #10b981, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <Zap size={24} color="#fff" />
             </div>
             <div>
-              <h3 style={{ margin: 0 }}>Account Boosting</h3>
-              <p style={{ margin: '2px 0 0', fontSize: '13px', color: 'var(--text-secondary)' }}>Get more visibility with a boosted profile — 10,000 FCFA/month</p>
+              <h3 style={{ margin: 0 }}>Salon Subscription (CamPay)</h3>
+              <p style={{ margin: '2px 0 0', fontSize: '13px', color: 'var(--text-secondary)' }}>Keep your salon visible to all clients — <strong>25 FCFA/month</strong></p>
             </div>
           </div>
 
           <div style={{ padding: '16px', background: 'var(--bg-main)', borderRadius: 'var(--radius-md)', marginBottom: '20px' }}>
             {!salon.subscription_active_until ? (
-              <p style={{ margin: 0, fontSize: '14px' }}>
-                <strong>Status:</strong> <span style={{ color: 'var(--primary)' }}>Free Trial (7 days) started today</span>
-              </p>
+              <>
+                <p style={{ margin: '0 0 4px', fontSize: '14px' }}>
+                  <strong>Status:</strong> <span style={{ color: 'var(--danger)', fontWeight: 600 }}>Unpaid / Not Visible</span>
+                </p>
+                <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-tertiary)' }}>Your salon is currently hidden from clients. Pay 25 FCFA via CamPay to make it visible to everyone.</p>
+              </>
             ) : new Date(salon.subscription_active_until) > new Date() ? (
               <>
                 <p style={{ margin: '0 0 4px', fontSize: '14px' }}>
-                  <strong>Status:</strong> <span style={{ color: 'var(--success)' }}>Active until {new Date(salon.subscription_active_until).toLocaleDateString()}</span>
+                  <strong>Status:</strong> <span style={{ color: 'var(--success)', fontWeight: 600 }}>Active until {new Date(salon.subscription_active_until).toLocaleDateString()}</span>
                 </p>
-                <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-tertiary)' }}>Your salon is visible to clients. Renew before expiry to avoid suspension.</p>
+                <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-tertiary)' }}>Your salon is visible to all clients. Renew before expiry to maintain visibility.</p>
               </>
             ) : (
               <>
                 <p style={{ margin: '0 0 4px', fontSize: '14px' }}>
-                  <strong>Status:</strong> <span style={{ color: 'var(--danger)' }}>Suspended — subscription expired on {new Date(salon.subscription_active_until).toLocaleDateString()}</span>
+                  <strong>Status:</strong> <span style={{ color: 'var(--danger)', fontWeight: 600 }}>Suspended — expired on {new Date(salon.subscription_active_until).toLocaleDateString()}</span>
                 </p>
-                <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-tertiary)' }}>Your salon is hidden from clients. Pay to reactivate.</p>
+                <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-tertiary)' }}>Your salon is hidden from clients. Pay 25 FCFA to reactivate visibility.</p>
               </>
             )}
           </div>
 
           {(!salon.subscription_active_until || new Date(salon.subscription_active_until) <= new Date()) && (
             <div style={{ padding: '12px 16px', background: 'var(--accent-bg, #fef3c7)', border: '1px solid #f59e0b', borderRadius: 'var(--radius-md)', marginBottom: '20px', fontSize: '13px', color: '#92400e' }}>
-              <strong>Free trial expired.</strong> Pay 10,000 FCFA to reactivate your account for 30 days.
+              <strong>Visibility Notice:</strong> Clients cannot discover or book your salon until you activate your monthly subscription (25 FCFA).
             </div>
           )}
 
-          <h4 style={{ marginBottom: '16px' }}>Simulate Payment</h4>
+          <h4 style={{ marginBottom: '16px' }}>Pay Subscription with CamPay (Mobile Money)</h4>
+
           {paymentResult && (
-            <div style={{ padding: '12px 16px', background: 'var(--success-bg, #d1fae5)', color: 'var(--success, #059669)', borderRadius: 'var(--radius-md)', marginBottom: '16px', fontSize: '14px' }}>
+            <div style={{ padding: '12px 16px', background: '#fee2e2', color: '#991b1b', borderRadius: 'var(--radius-md)', marginBottom: '16px', fontSize: '14px' }}>
               {paymentResult}
             </div>
           )}
-          <form onSubmit={async (e) => {
-            e.preventDefault();
-            setPaying(true);
-            setPaymentResult('');
-            try {
-              const result = await api.subscribeSalon(salon.id, { phone_number: phoneNumber, operator });
-              setPaymentResult(result.message);
-              setSalon({ ...salon, subscription_active_until: result.subscription_active_until });
-              const txns = await api.getSubscriptionTransactions(salon.id);
-              setTransactions(txns);
-            } catch (err) {
-              setPaymentResult('Payment failed. Try again.');
-            } finally {
-              setPaying(false);
-            }
-          }}>
+
+          {paymentStatus?.status === 'SUCCESSFUL' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', background: 'var(--success-bg, #d1fae5)', color: 'var(--success, #059669)', borderRadius: 'var(--radius-md)', marginBottom: '16px', fontSize: '14px' }}>
+              <CheckCircle2 size={20} />
+              <div>{paymentStatus.message}</div>
+            </div>
+          )}
+
+          {paymentStatus?.status === 'PENDING' && (
+            <div style={{ padding: '16px', background: '#eff6ff', border: '1px solid #3b82f6', borderRadius: 'var(--radius-md)', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px', color: '#1d4999', fontWeight: 600 }}>
+                <Loader2 size={18} className="animate-spin" />
+                Payment Request Sent to Phone
+              </div>
+              <p style={{ margin: '0 0 8px', fontSize: '13px', color: '#1e3a8a' }}>
+                Please check your phone (<strong>{phoneNumber}</strong>) and confirm the mobile money prompt with your PIN.
+                {paymentStatus.ussdCode && <span> (USSD: <strong>{paymentStatus.ussdCode}</strong>)</span>}
+              </p>
+              {paymentStatus.reference && (
+                <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '12px' }}>
+                  CamPay Reference: <code>{paymentStatus.reference}</code>
+                  {pollingCountdown > 0 && <span style={{ marginLeft: '12px' }}>Auto-checking ({pollingCountdown}s remaining)...</span>}
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={handleManualCheck} disabled={paying}>
+                  <RefreshCw size={14} /> Check Status Now
+                </button>
+                <button type="button" className="btn btn-primary btn-sm" onClick={handleDemoApprove} disabled={paying} style={{ background: '#059669', borderColor: '#059669' }}>
+                  <CheckCircle2 size={14} /> Approve Sandbox Test
+                </button>
+              </div>
+            </div>
+          )}
+
+          {paymentStatus?.status === 'FAILED' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', background: '#fee2e2', color: '#991b1b', borderRadius: 'var(--radius-md)', marginBottom: '16px', fontSize: '14px' }}>
+              <XCircle size={20} />
+              <div>{paymentStatus.message}</div>
+            </div>
+          )}
+
+          <form onSubmit={handleInitiatePayment}>
             <div className="form-group">
               <label>Mobile Money Operator</label>
               <select className="form-control" value={operator} onChange={(e) => setOperator(e.target.value)}>
-                <option value="momo">Mobile Money (MTN)</option>
-                <option value="orange">Orange Money</option>
+                <option value="momo">MTN Mobile Money (*126#)</option>
+                <option value="orange">Orange Money (*150#)</option>
               </select>
             </div>
             <div className="form-group">
-              <label>Phone Number</label>
-              <input className="form-control" required placeholder="e.g. 690000001" value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} />
+              <label>Phone Number (Cameroon)</label>
+              <input className="form-control" required placeholder="e.g. 677554433 or 237677554433" value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} />
             </div>
             <div style={{ padding: '12px 16px', background: 'var(--bg-main)', borderRadius: 'var(--radius-md)', marginBottom: '16px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-              Amount: <strong>10,000 FCFA</strong> — 30 days of boosted visibility
+              Amount: <strong style={{ color: 'var(--primary)', fontSize: '15px' }}>25 FCFA</strong> — 30 days of active visibility to all clients
             </div>
-            <button type="submit" className="btn btn-primary" disabled={paying}>
-              <Zap size={16} /> {paying ? 'Processing...' : 'Pay 10,000 FCFA'}
+            <button type="submit" className="btn btn-primary" disabled={paying || paymentStatus?.status === 'PENDING'}>
+              <Zap size={16} /> {paying ? 'Processing...' : 'Pay 25 FCFA with CamPay'}
             </button>
           </form>
 
-          {transactions.length > 0 && (
-            <div style={{ marginTop: '28px' }}>
+          {transactions.filter(t => t.transaction_type !== 'trial' && parseFloat(t.amount) !== 10000).length > 0 && (
+            <div style={{ marginTop: '32px' }}>
               <h4 style={{ marginBottom: '12px' }}>Transaction History</h4>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {transactions.map((txn) => (
-                  <div key={txn.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'var(--bg-main)', borderRadius: 'var(--radius-sm)', fontSize: '13px' }}>
-                    <div>
-                      <strong>{txn.transaction_type === 'trial' ? 'Free Trial' : 'Subscription'}</strong>
-                      {txn.operator !== 'system' && <span> via {txn.operator}</span>}
-                      {txn.phone_number && <span> ({txn.phone_number})</span>}
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontWeight: 700, color: txn.amount === 0 ? 'var(--text-tertiary)' : 'var(--primary)' }}>
-                        {parseFloat(txn.amount).toLocaleString()} FCFA
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {transactions.filter(t => t.transaction_type !== 'trial' && parseFloat(t.amount) !== 10000).map((txn) => {
+                  const isSuccess = txn.status === 'SUCCESSFUL';
+                  const isPending = txn.status === 'PENDING';
+                  const isFailed = txn.status === 'FAILED';
+                  return (
+                    <div key={txn.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'var(--bg-main)', borderRadius: 'var(--radius-sm)', fontSize: '13px', border: '1px solid var(--border-color, #e5e7eb)' }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                          <strong>{txn.transaction_type === 'trial' ? 'Free Trial' : 'Subscription Payment'}</strong>
+                          {isSuccess && <span style={{ background: '#dcfce7', color: '#166534', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 600 }}>Completed</span>}
+                          {isPending && <span style={{ background: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 600 }}>Pending</span>}
+                          {isFailed && <span style={{ background: '#fee2e2', color: '#991b1b', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 600 }}>Failed</span>}
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                          {txn.operator && txn.operator !== 'system' && <span>Operator: {txn.operator.toUpperCase()} </span>}
+                          {txn.phone_number && <span>• Tel: {txn.phone_number} </span>}
+                        </div>
+                        {txn.reference && (
+                          <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '2px' }}>
+                            CamPay Ref: <code>{txn.reference}</code>
+                          </div>
+                        )}
                       </div>
-                      <div style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
-                        {new Date(txn.created_at).toLocaleDateString()}
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontWeight: 700, fontSize: '14px', color: parseFloat(txn.amount) === 0 ? 'var(--text-tertiary)' : 'var(--primary)' }}>
+                          {parseFloat(txn.amount).toLocaleString()} FCFA
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '2px' }}>
+                          {new Date(txn.created_at).toLocaleString()}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

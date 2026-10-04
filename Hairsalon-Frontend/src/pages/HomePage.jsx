@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
+import { useAuth } from '../auth';
 import { Search, Star, MapPin, ChevronRight, Sparkles, Clock, TrendingUp, ArrowRight, CalendarPlus, MessageCircle, Scissors, Heart, Palette, LayoutGrid } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import ChatBot from '../components/ChatBot';
 
 export default function HomePage() {
+  const { user } = useAuth();
   const [salons, setSalons] = useState([]);
   const [hairstyles, setHairstyles] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -57,14 +59,14 @@ export default function HomePage() {
         <div className="hero-content">
           <div className="hero-tag animate-fade-in">
             <Sparkles size={14} />
-            <span>Cameroonian Beauty</span>
+            <span>Welcome, <strong>{user?.username || 'Client'}</strong>!</span>
           </div>
           <h1 className="hero-title animate-fade-in">
             Discover Your <br />
             <span className="text-gradient">Perfect Style</span>
           </h1>
           <p className="hero-subtitle animate-fade-in">
-            Connect with the best salons and stylists in Cameroon. Book instantly.
+            Welcome back, <strong>{user?.username}</strong>! Connect with the best salons and stylists in Cameroon. Book instantly.
           </p>
 
           <div className="hero-search animate-fade-in">

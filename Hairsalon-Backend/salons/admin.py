@@ -66,6 +66,6 @@ class ReviewAdmin(admin.ModelAdmin):
 
 @admin.register(SubscriptionTransaction)
 class SubscriptionTransactionAdmin(admin.ModelAdmin):
-    list_display = ('salon', 'amount', 'operator', 'transaction_type', 'created_at')
-    list_filter = ('transaction_type', 'operator')
-    search_fields = ('salon__name', 'phone_number')
+    list_display = ('salon', 'amount', 'operator', 'status', 'transaction_type', 'reference', 'created_at')
+    list_filter = ('status', 'transaction_type', 'operator')
+    search_fields = ('salon__name', 'phone_number', 'reference', 'operator_reference')

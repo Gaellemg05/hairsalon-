@@ -61,6 +61,10 @@ class Chat(models.Model):
     )
     salon = models.ForeignKey(Salon, on_delete=models.CASCADE, related_name='chats')
     created_at = models.DateTimeField(auto_now_add=True)
+    deleted_by_client = models.BooleanField(default=False)
+    deleted_by_hairdresser = models.BooleanField(default=False)
+    archived_by_client = models.BooleanField(default=False)
+    archived_by_hairdresser = models.BooleanField(default=False)
 
     class Meta:
         unique_together = ('client', 'hairdresser', 'salon')

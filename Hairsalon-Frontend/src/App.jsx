@@ -1,5 +1,6 @@
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth';
+import { NotificationProvider } from './context/NotificationContext';
 import Layout from './components/Layout';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
@@ -14,6 +15,7 @@ import MapPage from './pages/MapPage';
 import HairdresserDashboard from './pages/HairdresserDashboard';
 import SalonManagerPage from './pages/SalonManagerPage';
 import VirtualTryOnPage from './pages/VirtualTryOnPage';
+import LandingPage from './pages/LandingPage';
 
 function ProtectedRoute({ children, allowedRoles }) {
   const { user } = useAuth();
@@ -39,7 +41,7 @@ function GuestRoute({ children }) {
 }
 
 function AuthHandler() {
-  const { login } = useAuth();
+  const { user, login } = useAuth();
   const navigate = useNavigate();
 
   const handleLoginSuccess = (userData) => {
@@ -54,6 +56,7 @@ function AuthHandler() {
 
   return (
     <Routes>
+      <Route path="/landing" element={<LandingPage />} />
       <Route path="/login" element={
         <GuestRoute>
           <LoginPage onLoginSuccess={handleLoginSuccess} />
@@ -64,34 +67,61 @@ function AuthHandler() {
           <RegisterPage onLoginSuccess={handleRegisterSuccess} />
         </GuestRoute>
       } />
-      <Route path="/" element={
-        <ProtectedRoute>
-          <Layout />
-        </ProtectedRoute>
-      }>
-        <Route index element={<HomePage />} />
-        <Route path="try-on" element={<VirtualTryOnPage />} />
-        <Route path="booking" element={<BookingPage />} />
-        <Route path="salon/:id" element={<SalonDetailPage />} />
-        <Route path="appointments" element={<AppointmentsPage />} />
-        <Route path="my-salon" element={
-          <ProtectedRoute allowedRoles={['hairdresser']}>
-            <SalonManagerPage />
-          </ProtectedRoute>
-        } />
-        <Route path="chats" element={<ChatsPage />} />
-        <Route path="profile" element={<ProfilePage />} />
-        <Route path="map" element={<MapPage />} />
-        <Route path="dashboard" element={
-          <ProtectedRoute allowedRoles={['hairdresser']}>
-            <HairdresserDashboard />
-          </ProtectedRoute>
-        } />
-        <Route path="admin" element={
-          <ProtectedRoute allowedRoles={['admin']}>
-            <AdminPage />
-          </ProtectedRoute>
-        } />
+
+      {/* Root Route: If guest, renders LandingPage; if logged-in, renders Layout */}
+      <Route
+        path="/"
+        element={
+          !user ? (
+            <LandingPage />
+          ) : (
+            <ProtectedRoute>
+              <Layout />
+            </ProtectedRoute>
+          )
+        }
+      >
+        <Route
+          index
+          element={
+            !user ? null : user.role === 'hairdresser' ? (
+              <Navigate to="/dashboard" replace />
+            ) : (
+              <HomePage />
+            )
+          }
+        />
+        <Route path="try-on" element={<ProtectedRoute><VirtualTryOnPage /></ProtectedRoute>} />
+        <Route path="booking" element={<ProtectedRoute><BookingPage /></ProtectedRoute>} />
+        <Route path="salon/:id" element={<ProtectedRoute><SalonDetailPage /></ProtectedRoute>} />
+        <Route path="appointments" element={<ProtectedRoute><AppointmentsPage /></ProtectedRoute>} />
+        <Route
+          path="my-salon"
+          element={
+            <ProtectedRoute allowedRoles={['hairdresser']}>
+              <SalonManagerPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route path="chats" element={<ProtectedRoute><ChatsPage /></ProtectedRoute>} />
+        <Route path="profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+        <Route path="map" element={<ProtectedRoute><MapPage /></ProtectedRoute>} />
+        <Route
+          path="dashboard"
+          element={
+            <ProtectedRoute allowedRoles={['hairdresser']}>
+              <HairdresserDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="admin"
+          element={
+            <ProtectedRoute allowedRoles={['admin']}>
+              <AdminPage />
+            </ProtectedRoute>
+          }
+        />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
@@ -101,9 +131,11 @@ function AuthHandler() {
 export default function App() {
   return (
     <AuthProvider>
-      <HashRouter>
-        <AuthHandler />
-      </HashRouter>
+      <NotificationProvider>
+        <HashRouter>
+          <AuthHandler />
+        </HashRouter>
+      </NotificationProvider>
     </AuthProvider>
   );
 }

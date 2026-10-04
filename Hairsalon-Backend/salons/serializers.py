@@ -105,13 +105,37 @@ class SalonSerializer(serializers.ModelSerializer):
     manager_details = UserSerializer(source='manager', read_only=True)
     hairdressers = UserSerializer(many=True, read_only=True)
     manager = serializers.PrimaryKeyRelatedField(read_only=True)
+    image = serializers.FileField(required=False, allow_null=True)
+    image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Salon
         fields = (
             'id', 'name', 'description', 'address', 'phone_number',
-            'email', 'image_url', 'video_url', 'latitude', 'longitude',
+            'email', 'image', 'image_url', 'video_url', 'latitude', 'longitude',
             'manager', 'manager_details', 'hairdressers', 'services',
             'publications', 'hairstyle_publications', 'reviews',
             'subscription_active_until'
         )
+
+    def get_image_url(self, obj):
+        if hasattr(obj, 'image') and obj.image:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.image.url)
+            return f"http://127.0.0.1:8000{obj.image.url}"
+        if obj.image_url and obj.image_url.startswith('/media/'):
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.image_url)
+            return f"http://127.0.0.1:8000{obj.image_url}"
+        return obj.image_url
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        request = self.context.get('request')
+        for f in ['image', 'image_url']:
+            val = ret.get(f)
+            if val and isinstance(val, str) and val.startswith('/media/'):
+                ret[f] = request.build_absolute_uri(val) if request else f"http://127.0.0.1:8000{val}"
+        return ret

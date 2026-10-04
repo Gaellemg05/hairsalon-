@@ -1,11 +1,13 @@
-import { NavLink, useNavigate } from 'react-router-dom';
-import { Home, CalendarPlus, Clock, MessageCircle, User, Scissors, MapPin, LayoutDashboard, Store, Sparkles } from 'lucide-react';
+import { NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { Home, CalendarPlus, Clock, Calendar, MessageCircle, User, Scissors, MapPin, LayoutDashboard, Store, Sparkles } from 'lucide-react';
 import { useAuth } from '../auth';
 import { useUnreadCount } from '../hooks/useUnreadCount';
+import logoImg from '../assets/logo.jpeg';
 
 export default function Sidebar() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const unreadCount = useUnreadCount();
 
   const navItems = user?.role === 'hairdresser'
@@ -14,6 +16,7 @@ export default function Sidebar() {
         { to: '/my-salon', icon: Store, label: 'My Salon' },
         { to: '/try-on', icon: Sparkles, label: 'Virtual Try-On' },
         { to: '/appointments', icon: Clock, label: 'Bookings' },
+        { to: '/dashboard?tab=calendar', icon: Calendar, label: 'Calendar' },
         { to: '/chats', icon: MessageCircle, label: 'Chats', badge: unreadCount },
         { to: '/profile', icon: User, label: 'Profile' },
       ]
@@ -29,7 +32,7 @@ export default function Sidebar() {
 
   const handleLogout = () => {
     logout();
-    navigate('/login');
+    navigate('/');
   };
 
   return (
@@ -37,7 +40,7 @@ export default function Sidebar() {
       <div className="sidebar-content">
         <div className="sidebar-brand" onClick={() => navigate('/')}>
           <div className="sidebar-logo">
-            <Scissors size={22} strokeWidth={2.5} />
+            <img src={logoImg} alt="LuxeSalon" className="sidebar-logo-img" />
           </div>
           <div className="sidebar-brand-text">
             <span className="brand-name">LuxeSalon</span>
@@ -46,19 +49,25 @@ export default function Sidebar() {
         </div>
 
         <nav className="sidebar-nav">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) => `sidebar-link ${isActive ? 'sidebar-link-active' : ''}`}
-            >
-              <item.icon size={20} strokeWidth={2} />
-              <span>{item.label}</span>
-              {item.badge > 0 && (
-                <span className="nav-badge">{item.badge > 99 ? '99+' : item.badge}</span>
-              )}
-            </NavLink>
-          ))}
+          {navItems.map((item) => {
+            const currentFull = `${location.pathname}${location.search}`;
+            const isMatch = item.to.includes('?')
+              ? currentFull === item.to
+              : location.pathname === item.to && (item.to !== '/dashboard' || !location.search);
+            return (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={`sidebar-link ${isMatch ? 'sidebar-link-active' : ''}`}
+              >
+                <item.icon size={20} strokeWidth={2} />
+                <span>{item.label}</span>
+                {item.badge > 0 && (
+                  <span className="nav-badge">{item.badge > 99 ? '99+' : item.badge}</span>
+                )}
+              </NavLink>
+            );
+          })}
         </nav>
 
         <div className="sidebar-footer">

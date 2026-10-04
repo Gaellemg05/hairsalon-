@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api } from '../api';
-import { Scissors } from 'lucide-react';
+import logoImg from '../assets/logo.jpeg';
 
 export default function LoginPage({ onLoginSuccess }) {
   const [username, setUsername] = useState('');
@@ -28,7 +28,7 @@ export default function LoginPage({ onLoginSuccess }) {
       <div className="auth-card animate-fade-in">
         <div className="auth-brand">
           <div className="auth-logo">
-            <Scissors size={26} />
+            <img src={logoImg} alt="LuxeSalon" className="auth-logo-img" />
           </div>
           <h1>LuxeSalon</h1>
           <p className="auth-sub">Connect</p>

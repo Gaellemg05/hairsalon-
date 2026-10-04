@@ -107,7 +107,7 @@ class AvailabilityViewSet(viewsets.ModelViewSet):
         existing_appts = Appointment.objects.filter(
             hairdresser_id=hairdresser_id,
             date=target_date,
-            status__in=['pending', 'confirmed']
+            status__in=['pending', 'confirmed', 'completed']
         ).select_related('service')
 
         booked_ranges = []
@@ -145,7 +145,7 @@ class AvailabilityViewSet(viewsets.ModelViewSet):
                     is_available = False
                     reason = 'past'
                 # Check overlapping with existing appointments
-                elif any(not (slot_end <= b_start or curr_dt >= b_end) for b_start, b_end in booked_ranges):
+                elif any(curr_dt < b_end and b_start < slot_end for b_start, b_end in booked_ranges):
                     is_available = False
                     reason = 'booked'
 
@@ -251,20 +251,21 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         req_dt_start = datetime.combine(target_date, target_time)
         req_dt_end = req_dt_start + timedelta(minutes=duration_minutes)
 
-        # Check conflict with existing appointments
+        # Check conflict with existing appointments (Strict Non-Overlapping Check)
         existing_appts = Appointment.objects.filter(
             hairdresser_id=hairdresser_id,
             date=target_date,
-            status__in=['pending', 'confirmed']
+            status__in=['pending', 'confirmed', 'completed']
         ).select_related('service')
 
         for appt in existing_appts:
             appt_duration = appt.service.duration if appt.service else 30
             appt_dt_start = datetime.combine(target_date, appt.time)
             appt_dt_end = appt_dt_start + timedelta(minutes=appt_duration)
-            if not (req_dt_end <= appt_dt_start or req_dt_start >= appt_dt_end):
+            # Overlap occurs if and only if req_dt_start < appt_dt_end and appt_dt_start < req_dt_end
+            if req_dt_start < appt_dt_end and appt_dt_start < req_dt_end:
                 return Response(
-                    {'error': f'This stylist already has a booking around {appt.time.strftime("%H:%M")}. Please select another time.'},
+                    {'error': f'This stylist is already booked from {appt_dt_start.strftime("%H:%M")} to {appt_dt_end.strftime("%H:%M")}. Please select a different, non-overlapping time slot.'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
@@ -299,12 +300,15 @@ class ChatViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        from django.db.models import Q
+        if not user.is_authenticated:
+            return self.queryset.none()
         if user.role == 'admin':
             return self.queryset
-        elif user.role == 'hairdresser':
-            return self.queryset.filter(hairdresser=user)
-        else:
-            return self.queryset.filter(client=user)
+        return self.queryset.filter(
+            (Q(client=user) & Q(deleted_by_client=False)) |
+            (Q(hairdresser=user) & Q(deleted_by_hairdresser=False))
+        )
 
     def perform_create(self, serializer):
         user = self.request.user
@@ -312,6 +316,37 @@ class ChatViewSet(viewsets.ModelViewSet):
             serializer.save(hairdresser=user)
         else:
             serializer.save(client=user)
+
+    def destroy(self, request, *args, **kwargs):
+        chat = self.get_object()
+        user = request.user
+        if chat.client_id == user.id:
+            chat.deleted_by_client = True
+        if chat.hairdresser_id == user.id:
+            chat.deleted_by_hairdresser = True
+
+        # Only delete permanently from DB if both parties have deleted
+        if chat.deleted_by_client and chat.deleted_by_hairdresser:
+            chat.delete()
+            return Response({'status': 'deleted_permanently'}, status=status.HTTP_204_NO_CONTENT)
+        else:
+            chat.save()
+            return Response({'status': 'deleted_for_user'}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def archive(self, request, pk=None):
+        chat = self.get_object()
+        user = request.user
+        if chat.client_id == user.id:
+            chat.archived_by_client = not chat.archived_by_client
+            is_arch = chat.archived_by_client
+        elif chat.hairdresser_id == user.id:
+            chat.archived_by_hairdresser = not chat.archived_by_hairdresser
+            is_arch = chat.archived_by_hairdresser
+        else:
+            return Response({'detail': 'Permission denied.'}, status=status.HTTP_403_FORBIDDEN)
+        chat.save()
+        return Response({'status': 'archived' if is_arch else 'unarchived', 'is_archived': is_arch})
 
     @action(detail=False, methods=['post'])
     def find_or_create(self, request):
@@ -326,6 +361,12 @@ class ChatViewSet(viewsets.ModelViewSet):
             salon_id=salon_id
         ).first()
         if chat:
+            # Un-delete for user if they deleted their view
+            if str(request.user.id) == str(client_id):
+                chat.deleted_by_client = False
+            if str(request.user.id) == str(hairdresser_id):
+                chat.deleted_by_hairdresser = False
+            chat.save()
             serializer = self.get_serializer(chat)
             return Response(serializer.data)
         serializer = self.get_serializer(data=request.data)
@@ -355,6 +396,12 @@ class ChatViewSet(viewsets.ModelViewSet):
             content=content or '',
             image=image
         )
+        # Ensure recipient sees the incoming conversation
+        if chat.client_id == request.user.id:
+            chat.deleted_by_hairdresser = False
+        else:
+            chat.deleted_by_client = False
+        chat.save()
         serializer = MessageSerializer(message, context={'request': request})
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 

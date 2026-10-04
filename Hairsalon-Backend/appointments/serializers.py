@@ -63,13 +63,14 @@ class ChatSerializer(serializers.ModelSerializer):
     hairdresser_details = UserSerializer(source='hairdresser', read_only=True)
     salon_details = SalonSerializer(source='salon', read_only=True)
     unread_count = serializers.SerializerMethodField()
+    is_archived = serializers.SerializerMethodField()
     client = serializers.PrimaryKeyRelatedField(queryset=User.objects.all())
     hairdresser = serializers.PrimaryKeyRelatedField(queryset=User.objects.all())
     salon = serializers.PrimaryKeyRelatedField(queryset=Salon.objects.all())
 
     class Meta:
         model = Chat
-        fields = ('id', 'client', 'client_details', 'hairdresser', 'hairdresser_details', 'salon', 'salon_details', 'created_at', 'last_message', 'unread_count')
+        fields = ('id', 'client', 'client_details', 'hairdresser', 'hairdresser_details', 'salon', 'salon_details', 'created_at', 'last_message', 'unread_count', 'is_archived')
 
     def get_last_message(self, obj):
         last = obj.messages.last()
@@ -90,3 +91,12 @@ class ChatSerializer(serializers.ModelSerializer):
         if request and request.user.is_authenticated:
             return obj.messages.filter(read=False).exclude(sender=request.user).count()
         return obj.messages.filter(read=False).count()
+
+    def get_is_archived(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            if obj.client_id == request.user.id:
+                return obj.archived_by_client
+            if obj.hairdresser_id == request.user.id:
+                return obj.archived_by_hairdresser
+        return False
